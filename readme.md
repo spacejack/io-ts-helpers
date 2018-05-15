@@ -5,7 +5,7 @@ I have been exploring [io-ts](https://github.com/gcanti/io-ts) for a little whil
 io-ts comes with a set of built-in primitive types as you'd expect: numbers, strings, booleans, etc. To validate a string type, you can use:
 
 ```typescript
-t.string.decode(input)
+t.number.decode(input)
 ```
 
 If you want to [refine](https://github.com/gcanti/io-ts#refinements) that type - suppose we want a positive number - it's easy enough to do as per the example in the io-ts readme:
