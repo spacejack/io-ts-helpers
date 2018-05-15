@@ -2,7 +2,7 @@
 
 I have been exploring [io-ts](https://github.com/gcanti/io-ts) for a little while now, as a solution for validation and other run-time type checks. I've made a few observations along the way and some patterns are emerging from my use of it so far.
 
-io-ts comes with a set of built-in primitive types as you'd expect: numbers, strings, booleans, etc. To validate a string type, you can use:
+io-ts comes with a set of built-in primitive types as you'd expect: numbers, strings, booleans, etc. To validate a number type, you can use:
 
 ```typescript
 t.number.decode(input)
