@@ -164,6 +164,19 @@ const Positive = new PositiveType()
 export default Positive
 ```
 
+After sharing the above with [@gcanti](https://github.com/gcanti), he described an alternative branding helper, in case you just want to `decode` without a factory function:
+
+```typescript
+export function brand<RT extends t.Any, A, O, I>(type: t.RefinementType<RT, A, O, I>): <B>() => t.RefinementType<RT, A & B, O, I>
+export function brand<A, O, I>(type: t.Type<A, O, I>): <B>() => t.Type<A & B, O, I>
+export function brand<A, O, I>(type: t.Type<A, O, I>): <B>() => t.Type<A & B, O, I> {
+    return () => type as any
+}
+
+// const Positive: t.RefinementType<t.NumberType, number & Record<"__Positive", never>, number, t.mixed>
+export const Positive = brand(t.refinement(t.number, n => n >= 0, 'Positive'))<Record<'__Positive', never>>()
+```
+
 ## Objects
 
 Now that we have some helpers for primitive types, what can we do for objects? It's possible you might not need any helpers for objects. If objects always come from untrusted sources and you're comfortable working with `Either` types, then you'll probably always want to `decode` those.
