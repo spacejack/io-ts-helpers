@@ -170,7 +170,7 @@ Now that we have some helpers for primitive types, what can we do for objects? I
 
 But what if you have a trusted source and a validation error is truly an exceptional occurrance? Always needing to handle an `Either` can sometimes be inconvenient, so maybe a factory function would be helpful. Or maybe you're adding io-ts to a project that has been using exceptions for error handling. Using Either types isn't necessarily difficult but a helper that automatically throws may reduce a bit of friction involved if you just want the run-time types.
 
-Additionally, one thing I was a bit surprised by is that io-ts's `decode` method returns the *same* object rather than a copy. Additionally, it will not strip out extraneous properties that are not part of the interface type.
+One thing I was a bit surprised by is that io-ts's `decode` method returns the *same* object rather than a copy. Additionally, it will not strip out extraneous properties that are not part of the interface type.
 
 In these cases I've found the following helper function to be useful:
 
