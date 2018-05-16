@@ -307,3 +307,11 @@ Now you get the type `Song` inferred here:
 ```typescript
 const song = Song.of({...})
 ```
+
+## Live Example
+
+I have a [Stackblitz project](https://stackblitz.com/edit/typescript-r77wjq) where you can play with branded types and factory helpers. (Note that Stackblitz tends to lose some types that you would otherwise see in a local project in VSCode.)
+
+## See also:
+
+[io-ts form validation example](https://github.com/spacejack/io-ts-form-example)
