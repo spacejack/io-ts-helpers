@@ -164,17 +164,28 @@ const Positive = new PositiveType()
 export default Positive
 ```
 
-After sharing the above with [@gcanti](https://github.com/gcanti), he described an alternative branding helper, in case you just want to `decode` without a factory function:
+After sharing the above with [@gcanti](https://github.com/gcanti), he suggested a more succinct branding helper, in case you just want the run-time type without the factory function:
 
 ```typescript
-export function brand<RT extends t.Any, A, O, I>(type: t.RefinementType<RT, A, O, I>): <B>() => t.RefinementType<RT, A & B, O, I>
+export function brand<RT extends t.Any, A, O, I>(
+    type: t.RefinementType<RT, A, O, I>
+): <B>() => t.RefinementType<RT, A & B, O, I>
 export function brand<A, O, I>(type: t.Type<A, O, I>): <B>() => t.Type<A & B, O, I>
 export function brand<A, O, I>(type: t.Type<A, O, I>): <B>() => t.Type<A & B, O, I> {
     return () => type as any
 }
+```
 
-// const Positive: t.RefinementType<t.NumberType, number & Record<"__Positive", never>, number, t.mixed>
-export const Positive = brand(t.refinement(t.number, n => n >= 0, 'Positive'))<Record<'__Positive', never>>()
+Which could be used like so:
+
+```typescript
+const Positive = brand(t.refinement(
+    t.number, n => n >= 0, 'Positive'
+))<Record<'__Positive', never>>()
+
+type Positive = t.TypeOf<typeof Positive>
+
+const p: Positive = Positive.decode(1).getOrElseL(err => {...})
 ```
 
 ## Objects

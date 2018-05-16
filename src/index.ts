@@ -17,6 +17,13 @@ export function interfaceWithOptionals<RequiredProps extends t.Props, OptionalPr
 	return t.intersection([t.interface(required), t.partial(optional)], name)
 }
 
+/** Refined, branded (nominal) types helper */
+export function brand<RT extends t.Any, A, O, I>(type: t.RefinementType<RT, A, O, I>): <B>() => t.RefinementType<RT, A & B, O, I>
+export function brand<A, O, I>(type: t.Type<A, O, I>): <B>() => t.Type<A & B, O, I>
+export function brand<A, O, I>(type: t.Type<A, O, I>): <B>() => t.Type<A & B, O, I> {
+    return () => type as any
+}
+
 /**
  * A class that can be extended to create primitive types that
  * have a factory method `of`.
