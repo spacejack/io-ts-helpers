@@ -2,6 +2,10 @@
 
 I have been exploring [io-ts](https://github.com/gcanti/io-ts) for a little while now, as a solution for validation and other run-time type checks. I've made a few observations along the way and some patterns are emerging from my use of it so far.
 
+I shared some of these ideas with [@gcanti](https://github.com/gcanti) and he made some suggestions and improvements which I've included below.
+
+## Branding Primitives
+
 io-ts comes with a set of built-in primitive types as you'd expect: numbers, strings, booleans, etc. To validate a number type, you can use:
 
 ```typescript
@@ -20,7 +24,9 @@ Now we can do:
 Positive.decode(1)
 ```
 
-The `Right` of the resulting `Either` will contain a valid positive number. However, what if we do this:
+The `Right` of the resulting `Either` will contain a valid positive number.
+
+However, what if we do this:
 
 ```typescript
 Positive.decode(1).map(p => {
@@ -130,15 +136,19 @@ We could add other handy static methods to `PositiveType` if we need them:
 let a = Positive.add(b, c)
 ```
 
-If you're creating a lot of primitive types, you can eliminate some repetition by subclassing `t.Type`:
+If you want to make the `of` method available for all Type objects, we can patch `Type.prototype` and augment the io-ts type definition:
 
 ```typescript
-export class TypeFactory<T> extends t.Type<T> {
-    of (m: any): T {
-        return this.decode(m).getOrElseL(e => {
-            throw new Error('Invalid ' + this.name)
-        })
-    }
+declare module 'io-ts' {
+	interface Type<A, O, I> {
+		of (i: I): A
+	}
+}
+
+t.Type.prototype.of = function(i) {
+	return this.decode(i).getOrElseL(e => {
+		throw new IOTypeError('Invalid ' + this.name, e)
+	})
 }
 ```
 
@@ -164,13 +174,12 @@ const Positive = new PositiveType()
 export default Positive
 ```
 
-After sharing the above with [@gcanti](https://github.com/gcanti), he suggested a more succinct branding helper, in case you just want the run-time type without the factory function:
+[@gcanti](https://github.com/gcanti) suggested a more succinct branding helper that works with `t.refinement`:
 
 ```typescript
 export function brand<RT extends t.Any, A, O, I>(
     type: t.RefinementType<RT, A, O, I>
 ): <B>() => t.RefinementType<RT, A & B, O, I>
-export function brand<A, O, I>(type: t.Type<A, O, I>): <B>() => t.Type<A & B, O, I>
 export function brand<A, O, I>(type: t.Type<A, O, I>): <B>() => t.Type<A & B, O, I> {
     return () => type as any
 }
@@ -179,9 +188,9 @@ export function brand<A, O, I>(type: t.Type<A, O, I>): <B>() => t.Type<A & B, O,
 Which could be used like so:
 
 ```typescript
-const Positive = brand(t.refinement(
-    t.number, n => n >= 0, 'Positive'
-))<Record<'__Positive', never>>()
+const Positive = brand(
+    t.refinement(t.number, n => n >= 0, 'Positive')
+)<{__Positive: never}>()
 
 type Positive = t.TypeOf<typeof Positive>
 
@@ -190,127 +199,135 @@ const p: Positive = Positive.decode(1).getOrElseL(err => {...})
 
 ## Objects
 
-Now that we have some helpers for primitive types, what can we do for objects? It's possible you might not need any helpers for objects. If objects always come from untrusted sources and you're comfortable working with `Either` types, then you'll probably always want to `decode` those.
-
-But what if you have a trusted source and a validation error is truly an exceptional occurrance? Always needing to handle an `Either` can sometimes be inconvenient, so maybe a factory function would be helpful. Or maybe you're adding io-ts to a project that has been using exceptions for error handling. Using Either types isn't necessarily difficult but a helper that automatically throws may reduce a bit of friction involved if you just want the run-time types.
-
 One thing I was a bit surprised by is that io-ts's `decode` method returns the *same* object rather than a copy. Additionally, it will not strip out extraneous properties that are not part of the interface type.
 
-In these cases I've found the following helper function to be useful:
+`io-ts` includes a `strict` helper that will create an `Interface` type that only accepts recognized properties. Sometimes however you might want to allow inputs that contain additional properties, but be sure that those properties are stripped from the validated result, and that a new object is returned rather than a reference to the input.
+
+For this, [@gcanti](https://github.com/gcanti) suggested a `strip` helper. I wanted to use this not only for `Interface` types but also with `Partial` and `Intersection` types that are a mix of required and optional properties. These require the following three variations:
 
 ```typescript
-/** Helper that adds a factory method to the supplied interface type */
-export function interfaceFactory<
-    I extends (t.InterfaceType<any> | t.IntersectionType<any> | t.PartialType<any>),
-    T = t.TypeOf<I>
->(iface: I) {
-    return Object.assign(iface, {
-        /** Creates a new instance from the input. Throws on invalid input. */
-        of (r: Record<string, any>): T {
-            return iface.decode(r).fold(
-                e => {
-                    throw new IOTypeError(iface.name + ' type error', e)
-                },
-                o => {
-                    // create returns a new instance, not the same object that was supplied.
-                    // Therefore we can strip out extraneous properties.
-                    const a: Record<string, any> = {}
-                    const props = getProps<keyof T>(iface)
-                    props.forEach(p => {
-                        a[p] = o[p]
-                    })
-                    return a as T
-                }
-            )
-        }
-    })
+/** Returns an Interface type that returns a new object from validate and omits extraneous properties. */
+export function stripInterface<P extends t.Props, A, O>(type: t.InterfaceType<P, A, O>): t.InterfaceType<P, A, O> {
+	const keys = Object.keys(type.props)
+	const len = keys.length
+	return new t.InterfaceType(
+		type.name,
+		type.is,
+		(m, c) => type.validate(m, c).map((o: any) => {
+			const r: any = {}
+			for (let i = 0; i < len; i++) {
+				const k = keys[i]
+				r[k] = o[k]
+			}
+			return r
+		}),
+		type.encode,
+		type.props
+	)
 }
 
-/** A custom Error type that includes the validation error information */
-export class IOTypeError extends Error {
-    validationErrors: t.ValidationError[]
-    constructor(message: string, errs: t.ValidationError[]) {
-        super(message)
-        this.validationErrors = errs
-    }
+/** Returns a Partial type that returns a new object from validate and omits extraneous properties. */
+export function stripPartial<P extends t.Props, A, O>(type: t.PartialType<P, A, O>): t.PartialType<P, A, O> {
+	const keys = Object.keys(type.props)
+	const len = keys.length
+	return new t.PartialType(
+		type.name,
+		type.is,
+		(m, c) => type.validate(m, c).map((o: any) => {
+			const r: any = {}
+			for (let i = 0; i < len; i++) {
+				const k = keys[i]
+				// Optional properties can be skipped if omitted
+				if (Object.prototype.hasOwnProperty.call(o, k)) {
+					r[k] = o[k]
+				}
+			}
+			return r
+		}),
+		type.encode,
+		type.props
+	)
 }
 
-/**
- * Used internally by interfaceFactory.
- * Gets all props from an interface, partial or union type.
- */
-function getProps<T extends string> (i: any) {
-    if (i.props) {
-        return Object.keys(i.props) as T[]
-    } else if (i.types && i.types) {
-        let props: T[] = []
-        i.types.forEach((tp: any) => {
-            if (!tp.props) {
-                throw new Error('interfaceFactory expects that all types in a union have props')
-            }
-            props = props.concat(Object.keys(tp.props) as T[])
-        })
-        return props
-    } else {
-        throw new Error('interfaceFactory expects a type with props')
-    }
+/** Internal helper function that finds all property keys in an intersection type */
+function getIntersectionKeys<RTS extends t.Type<any, any, any>[], A, O, I>(type: t.IntersectionType<RTS, A, O, I>) {
+	const propKeys: Record<string, number> = {}
+	type.types.forEach((tp: any) => {
+		if (!tp.props) {
+			console.warn('getIntersectionKeys encountered a type without props')
+		}
+		const tpkeys = Object.keys(tp.props)
+		for (let i = 0; i < tpkeys.length; ++i) {
+			propKeys[tpkeys[i]] = 1
+		}
+	})
+	return Object.keys(propKeys)
+}
+
+/** Returns an Intersection type that returns a new object from validate and omits extraneous properties. */
+export function stripIntersection<RTS extends t.Type<any, any, any>[], A, O, I>(type: t.IntersectionType<RTS, A, O, I>): t.IntersectionType<RTS, A, O, I> {
+	const keys = getIntersectionKeys(type)
+	const len = keys.length
+	return new t.IntersectionType(
+		type.name,
+		type.is,
+		(m, c) => type.validate(m, c).map((o: any) => {
+			const r: any = {}
+			for (let i = 0; i < len; i++) {
+				const k = keys[i]
+				// Intersection may have optional properties that we can skip if omitted
+				if (Object.prototype.hasOwnProperty.call(o, k)) {
+					r[k] = o[k]
+				}
+			}
+			return r
+		}),
+		type.encode,
+		type.types
+	)
 }
 ```
 
-Unlike primitive types, we cannot easily extend an interface Type, so this function directly adds an `of` method to the io-ts type object. It can be used like so:
+Finally I wanted a shorter, overloaded wrapper function:
 
 ```typescript
-const Song = interfaceFactory(t.interface({
+/** Returns an Interface type that returns a new object from validate and omits extraneous properties. */
+export function strip<P extends t.Props, A, O>(type: t.InterfaceType<P, A, O>): t.InterfaceType<P, A, O>
+/** Returns a Partial type that returns a new object from validate and omits extraneous properties. */
+export function strip<P extends t.Props, A, O>(type: t.PartialType<P, A, O>): t.PartialType<P, A, O>
+/** Returns an Intersection type that returns a new object from validate and omits extraneous properties. */
+export function strip<RTS extends t.Type<any, any, any>[], A, O, I>(type: t.IntersectionType<RTS, A, O, I>): t.IntersectionType<RTS, A, O, I>
+export function strip<T>(type: T): T {
+	if (type instanceof t.IntersectionType) {
+		return stripIntersection(type) as any as T
+	}
+	if (type instanceof t.PartialType) {
+		return stripPartial(type) as any as T
+	}
+	if (type instanceof t.InterfaceType) {
+		return stripInterface(type) as any as T
+	}
+	throw new Error("strip expects an Interface, Partial or Intersection type")
+}
+```
+
+Example use:
+
+```typescript
+const Song = strip(t.interface({
     title: t.string,
     duration: Positive
 }, 'Song'))
 
-interface Song extends t.TypeOf<Song> {}
-```
-
-And now we can use our `Song` type/factory like this:
-
-```typescript
-const song: Song = Song.of({
-    title: 'Mona Lisa and Mad Hatters',
-    duration: 280
-})
-```
-
-Of course we can still use io-ts validation:
-
-```typescript
 Song.decode({
     title: 'Blue Holiday',
-    duration: 225
-}).fold(
-    //...
-)
+    duration: 225,
+    extra: 'xyz'
+}).map(song => {
+    console.log(song)
+    // Outputs: {title: 'Blue Holiday', duration: 225}
+})
 ```
-
-One more refinement: the type returned by `of` isn't very nice - editor tooling will display the object literal types rather than using the `Song` alias. We can get around that by explicitly providing types for our factory builder:
-
-```typescript
-const _Song = t.interface({
-    title: t.string,
-    duration: Positive
-}, 'Song')
-
-interface Song extends t.TypeOf<typeof _Song> {}
-
-const Song = interfaceFactory<typeof _Song, Song>(_Song)
-
-```
-
-Now you get the type `Song` inferred here:
-
-```typescript
-const song = Song.of({...})
-```
-
-## Live Example
-
-I have a [Stackblitz project](https://stackblitz.com/edit/typescript-r77wjq) where you can play with branded types and factory helpers. (Note that Stackblitz tends to lose some types that you would otherwise see in a local project in VSCode.)
 
 ## See also:
 

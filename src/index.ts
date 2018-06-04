@@ -1,8 +1,33 @@
-// io-ts Helpers
-
 import * as t from 'io-ts'
 
-/** A useful helper as suggested from io-ts docs */
+// NOTE: This module must be imported before Type.prototype.of is used.
+
+// Augment the io-ts module
+declare module 'io-ts' {
+	interface Type<A, O, I> {
+		/** Returns decoded value, throws IOTypeError on invalid input */
+		of (i: I): A
+	}
+}
+
+// Patches the t.Type prototype to add an `of` method
+t.Type.prototype.of = function(i) {
+	return this.decode(i).getOrElseL(e => {
+		throw new IOTypeError('Invalid ' + this.name, e)
+	})
+}
+
+/** Error object that contains io-ts validation errors */
+export class IOTypeError {
+	constructor (public message: string, public validationErrors: t.ValidationError[]) {}
+}
+
+export function brand<RT extends t.Any, A, O, I>(type: t.RefinementType<RT, A, O, I>): <B>() => t.RefinementType<RT, A & B, O, I>
+export function brand<A, O, I>(type: t.Type<A, O, I>): <B>() => t.Type<A & B, O, I> {
+    return () => type as any
+}
+
+/** Returns a type that contains required and optional properties */
 export function interfaceWithOptionals<RequiredProps extends t.Props, OptionalProps extends t.Props>(
 	required: RequiredProps,
 	optional: OptionalProps,
@@ -17,78 +42,102 @@ export function interfaceWithOptionals<RequiredProps extends t.Props, OptionalPr
 	return t.intersection([t.interface(required), t.partial(optional)], name)
 }
 
-/** Refined, branded (nominal) types helper */
-export function brand<RT extends t.Any, A, O, I>(type: t.RefinementType<RT, A, O, I>): <B>() => t.RefinementType<RT, A & B, O, I>
-export function brand<A, O, I>(type: t.Type<A, O, I>): <B>() => t.Type<A & B, O, I>
-export function brand<A, O, I>(type: t.Type<A, O, I>): <B>() => t.Type<A & B, O, I> {
-    return () => type as any
-}
-
-/**
- * A class that can be extended to create primitive types that
- * have a factory method `of`.
- */
-export class TypeFactory<T> extends t.Type<T> {
-	of (m: any): T {
-		return this.decode(m).getOrElseL(e => {
-			throw new IOTypeError(this.name + ' type error', e)
-		})
-	}
-}
-
-/** Error object that contains io-ts validation errors */
-export class IOTypeError extends Error {
-	validationErrors: t.ValidationError[]
-	constructor(message: string, errs: t.ValidationError[]) {
-		super(message)
-		this.validationErrors = errs
-	}
-}
-
-/**
- * Gets all props from an interface, partial or union type.
- * Used internally by interfaceConstructor.
- */
-function getProps<T extends string> (i: any) {
-	if (i.props) {
-		return Object.keys(i.props) as T[]
-	} else if (i.types && i.types) {
-		let props: T[] = []
-		i.types.forEach((tp: any) => {
-			if (!tp.props) {
-				throw new Error('interfaceConstructor expects that all types in a union have props')
+/** Returns an Interface type that returns a new object from validate and omits extraneous properties. */
+export function stripInterface<P extends t.Props, A, O>(type: t.InterfaceType<P, A, O>): t.InterfaceType<P, A, O> {
+	const keys = Object.keys(type.props)
+	const len = keys.length
+	return new t.InterfaceType(
+		type.name,
+		type.is,
+		(m, c) => type.validate(m, c).map((o: any) => {
+			const r: any = {}
+			for (let i = 0; i < len; i++) {
+				const k = keys[i]
+				r[k] = o[k]
 			}
-			props = props.concat(Object.keys(tp.props) as T[])
-		})
-		return props
-	} else {
-		throw new Error('interfaceConstructor expects a type with props')
-	}
+			return r
+		}),
+		type.encode,
+		type.props
+	)
 }
 
-/** Helper that adds a create method to the supplied interface type */
-export function interfaceFactory<
-	I extends (t.InterfaceType<any> | t.IntersectionType<any> | t.PartialType<any>),
-	T = t.TypeOf<I>
->(iface: I) {
-	return Object.assign(iface, {
-		/** Creates a new instance from the input. Throws on invalid input. */
-		of (r: Record<string, any>): T {
-			return iface.decode(r).fold(
-				e => {
-					throw new IOTypeError(iface.name + ' type error', e)
-				},
-				o => {
-					// create returns a new instance, not the same object that was supplied.
-					// Therefore we can strip out extraneous properties.
-					const a: Record<string, any> = {}
-					const props = getProps<keyof T>(iface)
-					props.forEach(p => {
-						a[p] = o[p]
-					})
-					return a as T
+/** Returns a Partial type that returns a new object from validate and omits extraneous properties. */
+export function stripPartial<P extends t.Props, A, O>(type: t.PartialType<P, A, O>): t.PartialType<P, A, O> {
+	const keys = Object.keys(type.props)
+	const len = keys.length
+	return new t.PartialType(
+		type.name,
+		type.is,
+		(m, c) => type.validate(m, c).map((o: any) => {
+			const r: any = {}
+			for (let i = 0; i < len; i++) {
+				const k = keys[i]
+				// Optional properties can be skipped if omitted
+				if (Object.prototype.hasOwnProperty.call(o, k)) {
+					r[k] = o[k]
 				}
-			)
+			}
+			return r
+		}),
+		type.encode,
+		type.props
+	)
+}
+
+/** Internal helper function that finds all property keys in an intersection type */
+function getIntersectionKeys<RTS extends t.Type<any, any, any>[], A, O, I>(type: t.IntersectionType<RTS, A, O, I>) {
+	const propKeys: Record<string, number> = {}
+	type.types.forEach((tp: any) => {
+		if (!tp.props) {
+			console.warn('getIntersectionKeys encountered a type without props')
+		}
+		const tpkeys = Object.keys(tp.props)
+		for (let i = 0; i < tpkeys.length; ++i) {
+			propKeys[tpkeys[i]] = 1
 		}
 	})
+	return Object.keys(propKeys)
+}
+
+/** Returns an Intersection type that returns a new object from validate and omits extraneous properties. */
+export function stripIntersection<RTS extends t.Type<any, any, any>[], A, O, I>(type: t.IntersectionType<RTS, A, O, I>): t.IntersectionType<RTS, A, O, I> {
+	const keys = getIntersectionKeys(type)
+	const len = keys.length
+	return new t.IntersectionType(
+		type.name,
+		type.is,
+		(m, c) => type.validate(m, c).map((o: any) => {
+			const r: any = {}
+			for (let i = 0; i < len; i++) {
+				const k = keys[i]
+				// Intersection may have optional properties that we can skip if omitted
+				if (Object.prototype.hasOwnProperty.call(o, k)) {
+					r[k] = o[k]
+				}
+			}
+			return r
+		}),
+		type.encode,
+		type.types
+	)
+}
+
+/** Returns an Interface type that returns a new object from validate and omits extraneous properties. */
+export function strip<P extends t.Props, A, O>(type: t.InterfaceType<P, A, O>): t.InterfaceType<P, A, O>
+/** Returns a Partial type that returns a new object from validate and omits extraneous properties. */
+export function strip<P extends t.Props, A, O>(type: t.PartialType<P, A, O>): t.PartialType<P, A, O>
+/** Returns an Intersection type that returns a new object from validate and omits extraneous properties. */
+export function strip<RTS extends t.Type<any, any, any>[], A, O, I>(type: t.IntersectionType<RTS, A, O, I>): t.IntersectionType<RTS, A, O, I>
+export function strip<T>(type: T): T {
+	if (type instanceof t.IntersectionType) {
+		return stripIntersection(type) as any as T
+	}
+	if (type instanceof t.PartialType) {
+		return stripPartial(type) as any as T
+	}
+	if (type instanceof t.InterfaceType) {
+		return stripInterface(type) as any as T
+	}
+	throw new Error("strip expects an Interface, Partial or Intersection type")
 }
