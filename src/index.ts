@@ -1,5 +1,7 @@
 import * as t from 'io-ts'
 
+// NOTE: This source is deprecated and no longer needed, as of io-ts version 2.
+
 // NOTE: This module must be imported before Type.prototype.of is used.
 
 // Augment the io-ts module
